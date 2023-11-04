@@ -13,7 +13,7 @@ void conf_EXTI0(void);
 void conf_EXTI1(void);
 void conf_ADC(void);
 void conf_DAC(void);
-void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr);
+void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr, uint8_t P2M);
 
 void conf_PWM_Red();
 void conf_PWM_Green();
@@ -145,7 +145,8 @@ void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr, uint8_t P2M){
 
 	GPDMA_Channel_CFG_Type dmac;
 	dmac.ChannelNum = 0;
-	dmac.SrcMemAddr
+	dmac.SrcMemAddr = (P2M) ? 0 : SrcAddr;
+	dmac.DstMemAddr = (P2M) ? DstAddr : 0;
 
 }
 
