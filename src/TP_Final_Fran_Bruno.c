@@ -13,11 +13,15 @@ void conf_EXTI0(void);
 void conf_EXTI1(void);
 void conf_ADC(void);
 void conf_DAC(void);
-void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr, uint8_t P2M);
+void conf_DMA(uint8_t P2M);
+void initPWMs(void);
 
 void conf_PWM_Red();
 void conf_PWM_Green();
 void conf_PWM_Blue();
+
+void adapt_signal_data_for_dac(void);
+void delay(uint32_t times);
 
 /*
  * ADC_Freq = 100 [Hz] -> T between samples = 10[ms].
@@ -26,13 +30,26 @@ void conf_PWM_Blue();
 #define ADC_FREQ 100
 #define DAC_TOUT 250000
 
+#define REDLED_LPC		(1<<22)
+#define GREENLED_LPC 	(1<<25)
+#define BLUELED_LPC 	(1<<26)
+
+
 uint32_t signal[300]; //300 samples (1,2KB)
+uint8_t adc_converting;
+uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
 int main(void) {
 
 
-
+	conf_GPIO();
+	conf_EXTI0();
+	conf_EXTI1();
+	conf_ADC();
+	conf_DAC();
+	init_PWMs();
     while(1) {
     }
+
     return 0 ;
 }
 
@@ -57,6 +74,29 @@ void conf_GPIO(void){
 
 	//Set P0.0 P0.1 and P0.2 as output
 	GPIO_SetDir(0,0x7,1);
+
+
+	//Also we configure the integrated led's for user alerts
+	//P0.22 as GPIO for red led
+	pinc.Pinnum = PINSEL_PIN_22;
+	PINSEL_ConfigPin(&pinc);
+
+	//P3.25 as GPIO for green led
+	pinc.Portnum = PINSEL_PORT_3;
+	pinc.Pinnum = PINSEL_PIN_25;
+	PINSEL_ConfigPin(&pinc);
+
+	//P3.26 as GPIO for blue led
+	pinc.Pinnum = PINSEL_PIN_26;
+	PINSEL_ConfigPin(&pinc);
+
+	//Set P0.22 P3.25 and P3.26 as output
+	GPIO_SetDir(0, REDLED_LPC, 1);
+	GPIO_SetDir(3, (GREENLED_LPC | BLUELED_LPC), 1);
+
+	//Shut down led's
+	LPC_GPIO0->FIOCLR |= REDLED_LPC;
+	LPC_GPIO3->FIOCLR |= (GREENLED_LPC | BLUELED_LPC);
 }
 
 //External interrupt configuration for general modes changing
@@ -123,20 +163,20 @@ void conf_DAC(void){
 	DAC_Init(LPC_DAC);
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacc);
 	DAC_SetDMATimeOut(LPC_DAC, DAC_TOUT);
+	DAC_UpdateValue(LPC_DAC, 0);
 }
 
-void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr, uint8_t P2M){
+//DMA configuration function. 'P2M' is a flag to know if the transfer is ADC to Mem or Mem to DAC.
+void conf_DMA(uint8_t P2M){
 	GPDMA_LLI_Type list;
-	list.SrcAddr = SrcAddr;
-	list.DstAddr = DstAddr;
-	list.NextLLI = &list;
-	list.Control = (2^13) | (2<<18) | (2<<21);
-	//If the transfer type is P2M set DI and clear SI, else if it's M2P set SI and clear DI
-	if(P2M){
-		list.Control &= ~(1<<26);
-		list.Control |= (1<<27);
-	}
-	else{
+	if(!P2M){//If transfer type is M2P (DAC to memory), then configure LLI
+		list.SrcAddr = (uint32_t)signal;
+		list.DstAddr = (uint32_t)&(LPC_DAC->DACR);
+		list.NextLLI = (uint32_t)&list;
+		list.Control = (299)	//Transfer size
+					  |(2<<18)	//Source width = 32 bits
+					  |(2<<21);	//Destination width = 32 bits
+		//Set SI and clear DI
 		list.Control &= ~(1<<27);
 		list.Control |= (1<<26);
 	}
@@ -145,10 +185,121 @@ void conf_DMA(uint32_t *SrcAddr, uint32_t *DstAddr, uint8_t P2M){
 
 	GPDMA_Channel_CFG_Type dmac;
 	dmac.ChannelNum = 0;
-	dmac.SrcMemAddr = (P2M) ? 0 : SrcAddr;
-	dmac.DstMemAddr = (P2M) ? DstAddr : 0;
-
+	dmac.SrcMemAddr = (uint32_t)((P2M) ? 0 : signal);
+	dmac.DstMemAddr = (uint32_t)((P2M) ? signal : 0);
+	dmac.TransferSize = 299;
+	dmac.TransferWidth = 0;
+	dmac.TransferType = (P2M) ? GPDMA_TRANSFERTYPE_P2M : GPDMA_TRANSFERTYPE_M2P;
+	dmac.SrcConn = (P2M) ? GPDMA_CONN_ADC : 0;
+	dmac.DstConn = (P2M) ? 0 : GPDMA_CONN_DAC;
+	dmac.DMALLI = (uint32_t)((P2M) ? 0 : &list);
+	GPDMA_Setup(&dmac);
 }
 
+void EINT0_IRQHandler(){
+	if(mode == 0){
+		//Disable UART
+
+		//Shutdown PWM signals on GPIO pins
+		TIM_Cmd(LPC_TIM0,DISABLE);
+		TIM_Cmd(LPC_TIM1,DISABLE);
+		TIM_Cmd(LPC_TIM2,DISABLE);
+		GPIO_ClearValue(0, 0x7);
+
+		//Configure DMA and enable its channel and ADC channel
+		conf_DMA(1);
+		GPDMA_ChannelCmd(0, ENABLE);
+		NVIC_EnableIRQ(DMA_IRQn);
+		ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
+		adc_converting = 1;
+		mode = 1;
+	}
+	else{
+		if(adc_converting){
+			//Alert to user and do nothing
+			LPC_GPIO0->FIOSET |= REDLED_LPC;
+			delay(2000);
+			LPC_GPIO0->FIOCLR |= REDLED_LPC;
+		}
+		else{
+			//Stop DMA transfer and disable its channel cleanly
+			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			GPDMA_ChannelCmd(0,DISABLE);
+
+			DAC_UpdateValue(LPC_DAC, 0);
+
+			//Enable UART and PWM signals again
+			TIM_Cmd(LPC_TIM0,ENABLE);
+			TIM_Cmd(LPC_TIM1,ENABLE);
+			TIM_Cmd(LPC_TIM2,ENABLE);
+
+			mode=0;
+		}
+	}
+
+	EXTI_ClearEXTIFlag(EXTI_EINT0);
+}
+
+void EINT1_IRQHandler(){
+	if(modo==1){
+		if(adc_converting){
+			//Alert to user and do nothing
+			LPC_GPIO0->FIOSET |= REDLED_LPC;
+			delay(2000);
+			LPC_GPIO0->FIOCLR |= REDLED_LPC;
+		}
+		else{
+			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			GPDMA_ChannelCmd(0,DISABLE);
+			conf_DMA(1);
+			GPDMA_ChannelCmd(0, ENABLE);
+			NVIC_EnableIRQ(DMA_IRQn);
+			ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
+			adc_converting = 1;
+		}
+	}
+	else{
+		//Alert to user and do nothing
+		LPC_GPIO3->FIOSET |= BLUELED_LPC;
+		delay(2000);
+		LPC_GPIO3->FIOCLR |= BLUELED_LPC;
+	}
 
 
+	EXTI_ClearEXTIFlag(EXTI_EINT1);
+}
+
+void DMA_IRQHandler(){
+	if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
+		if(adc_converting){
+			while(!ADC_ChannelGetStatus(LPC_ADC, 0, ADC_DATA_DONE));//Wait for ADC to finish
+			ADC_ChannelCmd(LPC_ADC, 0, DISABLE);
+
+			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			GPDMA_ChannelCmd(0,DISABLE);
+
+			adapt_signal_data_for_dac();
+			conf_DMA(0);//Configure DMA for DAC to memory transfer
+			GPDMA_ChannelCmd(0, ENABLE);
+			adc_converting = 0;
+			NVIC_DisableIRQ(DMA_IRQn);//Disable DMA interrupts
+		}
+	}
+
+	GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 0);
+	GPDMA_ClearIntPending(GPDMA_STATCLR_INTERR, 0);
+}
+
+void adapt_signal_data_for_dac(void){
+	for(int i =0 ; i<sizeof(signal);i++){
+		signal[i] &= (0x3FF << 6);
+	}
+}
+
+void delay(uint32_t times) {
+	for(uint32_t i=0; i<times; i++)
+		for(uint32_t j=0; j<times; j++);
+}
