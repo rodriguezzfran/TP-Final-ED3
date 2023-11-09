@@ -56,6 +56,7 @@ int main(void) {
 
 
 	NVIC_EnableIRQ(UART2_IRQn);
+
 	NVIC_EnableIRQ(EINT0_IRQn);
 	NVIC_EnableIRQ(EINT1_IRQn);
 
@@ -212,6 +213,7 @@ void conf_DMA(uint8_t P2M){
 }
 
 void configUART(void) {
+	NVIC_DisableIRQ(DMA_IRQn);
     // Configura pines para UART2
     PINSEL_CFG_Type PinCfg;
     PinCfg.Funcnum = 1;
