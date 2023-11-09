@@ -21,9 +21,12 @@ void conf_PWM_Red();
 void conf_PWM_Green();
 void conf_PWM_Blue();
 
+void turn_on_PWMs(void);
+void turn_off_PWMs(void);
 void processReceivedData(void);
 void adapt_signal_data_for_dac(void);
 void delay(uint32_t times);
+
 
 /*
  * ADC_Freq = 100 [Hz] -> T between samples = 10[ms].
@@ -54,6 +57,9 @@ int main(void) {
 	conf_DAC();
 	//init_PWMs();//implement
 
+
+	//UART_TxCmd(LPC_UART2, ENABLE);
+	//UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
 
 	NVIC_EnableIRQ(UART2_IRQn);
 
@@ -217,43 +223,49 @@ void configUART(void) {
     // Configura pines para UART2
     PINSEL_CFG_Type PinCfg;
     PinCfg.Funcnum = 1;
+    PinCfg.Pinmode = 0;
     PinCfg.Portnum = 0;
     PinCfg.Pinnum = 10;
     PINSEL_ConfigPin(&PinCfg);
     PinCfg.Pinnum = 11;
     PINSEL_ConfigPin(&PinCfg);
 
-    // Configura el periférico UART
-    UART_CFG_Type UARTConfigStruct;
-    UART_FIFO_CFG_Type FIFOCfg;
-
-    FIFOCfg.FIFO_DMAMode = DISABLE;
-    FIFOCfg.FIFO_Level = UART_FIFO_TRGLEV1;
-    FIFOCfg.FIFO_ResetRxBuf = ENABLE;
-    FIFOCfg.FIFO_ResetTxBuf = ENABLE;
-    UARTConfigStruct.Baud_rate = 460800;
-    UARTConfigStruct.Databits = UART_DATABIT_8;
-    UARTConfigStruct.Parity = UART_PARITY_NONE;
-    UARTConfigStruct.Stopbits = UART_STOPBIT_1;
-    UART_FIFOConfigStructInit(&FIFOCfg);
+    UART_CFG_Type      UARTConfigStruct;
+    UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+    //configuraci�n por defecto:
+    UART_ConfigStructInit(&UARTConfigStruct);
+    //inicializa perif�rico
     UART_Init(LPC_UART2, &UARTConfigStruct);
-    UART_FIFOConfig(LPC_UART2, &FIFOCfg);
-
-    // Habilita la interrupción de recepción para UART2
+    //Inicializa FIFO
+    UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
+    UART_FIFOConfig(LPC_UART2, &UARTFIFOConfigStruct);
+    // Habilita interrupci�n por el RX del UART
     UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
-
-    // Habilita el buffer de recepción con el tamaño deseado
-    UART_Receive(LPC_UART2, uartRxBuffer, UART_RX_BUFFER_SIZE, BLOCKING);
+    // Habilita interrupci�n por el estado de la linea UART
+    UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
+    return;
 }
 
-void UART2_IRQHandler(void) {
-	  // Verifica si la interrupción es por Recepción de Datos (RBR)
-	   if (UART_GetLineStatus(LPC_UART2) & UART_LSR_RDR){
-	       UART_Receive(LPC_UART2, uartRxBuffer, UART_RX_BUFFER_SIZE, BLOCKING);
-	       processReceivedData();
-	   }
-
-	   NVIC_ClearPendingIRQ(UART2_IRQn);
+void UART2_IRQHandler() {
+	uint32_t intsrc, tmp, tmp1;
+		//Determina la fuente de interrupci�n
+		intsrc = UART_GetIntId(LPC_UART2);
+		tmp = intsrc & UART_IIR_INTID_MASK;
+		// Eval�a Line Status
+		if (tmp == UART_IIR_INTID_RLS){
+			tmp1 = UART_GetLineStatus(LPC_UART2);
+			tmp1 &= (UART_LSR_OE | UART_LSR_PE | UART_LSR_FE \
+					| UART_LSR_BI | UART_LSR_RXFE);
+			// ingresa a un Loop infinito si hay error
+			if (tmp1) {
+				while(1){};
+			}
+		}
+		// Receive Data Available or Character time-out
+		if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI)){
+			UART_Receive(LPC_UART2, uartRxBuffer, sizeof(uartRxBuffer), NONE_BLOCKING);
+		}
+		return;
 }
 
 void processReceivedData(void){
@@ -263,12 +275,14 @@ void processReceivedData(void){
 void EINT0_IRQHandler(){
 	if(mode == 0){
 		//Disable UART
+		// Deshabilita interrupci�n por el RX del UART
+		UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, DISABLE);
+		// Deshabilita interrupci�n por el estado de la linea UART
+		UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, DISABLE);
 
 		//Shutdown PWM signals on GPIO pins
-		TIM_Cmd(LPC_TIM0,DISABLE);
-		TIM_Cmd(LPC_TIM1,DISABLE);
-		TIM_Cmd(LPC_TIM2,DISABLE);
-		GPIO_ClearValue(0, 0x7);
+		turn_off_PWMs();
+
 
 		//Configure DMA and enable its channel and ADC channel
 		conf_DMA(1);
@@ -294,9 +308,12 @@ void EINT0_IRQHandler(){
 			DAC_UpdateValue(LPC_DAC, 0);
 
 			//Enable UART and PWM signals again
-			TIM_Cmd(LPC_TIM0,ENABLE);
-			TIM_Cmd(LPC_TIM1,ENABLE);
-			TIM_Cmd(LPC_TIM2,ENABLE);
+			// Habilita interrupci�n por el RX del UART
+			UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
+			// Habilita interrupci�n por el estado de la linea UART
+			UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
+
+			turn_on_PWMs();
 
 			mode=0;
 		}
@@ -361,6 +378,28 @@ void adapt_signal_data_for_dac(void){
 	for(int i =0 ; i<sizeof(signal);i++){
 		signal[i] &= (0x3FF << 6);
 	}
+}
+
+void turn_off_PWMs(void){
+	NVIC_DisableIRQ(TIMER0_IRQn);
+	NVIC_DisableIRQ(TIMER1_IRQn);
+	NVIC_DisableIRQ(TIMER2_IRQn);
+
+	TIM_Cmd(LPC_TIM0,DISABLE);
+	TIM_Cmd(LPC_TIM1,DISABLE);
+	TIM_Cmd(LPC_TIM2,DISABLE);
+	GPIO_ClearValue(0, 0x7);
+}
+
+
+void turn_on_PWMs(void){
+	NVIC_EnableIRQ(TIMER0_IRQn);
+	NVIC_EnableIRQ(TIMER1_IRQn);
+	NVIC_EnableIRQ(TIMER2_IRQn);
+
+	TIM_Cmd(LPC_TIM0,ENABLE);
+	TIM_Cmd(LPC_TIM1,ENABLE);
+	TIM_Cmd(LPC_TIM2,ENABLE);
 }
 
 void delay(uint32_t times) {
