@@ -14,12 +14,14 @@ void conf_EXTI1(void);
 void conf_ADC(void);
 void conf_DAC(void);
 void conf_DMA(uint8_t P2M);
+void configUART(void);
 void initPWMs(void);
 
 void conf_PWM_Red();
 void conf_PWM_Green();
 void conf_PWM_Blue();
 
+void processReceivedData(void);
 void adapt_signal_data_for_dac(void);
 void delay(uint32_t times);
 
@@ -34,10 +36,14 @@ void delay(uint32_t times);
 #define GREENLED_LPC 	(1<<25)
 #define BLUELED_LPC 	(1<<26)
 
+#define UART_RX_BUFFER_SIZE 4
 
 uint32_t signal[300]; //300 samples (1,2KB)
 uint8_t adc_converting;
 uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
+uint8_t uartRxBuffer[4];
+
+GPDMA_LLI_Type DMA_list;
 int main(void) {
 
 
@@ -46,7 +52,13 @@ int main(void) {
 	conf_EXTI1();
 	conf_ADC();
 	conf_DAC();
-	init_PWMs();
+	//init_PWMs();//implement
+
+
+	NVIC_EnableIRQ(UART2_IRQn);
+	NVIC_EnableIRQ(EINT0_IRQn);
+	NVIC_EnableIRQ(EINT1_IRQn);
+
     while(1) {
     }
 
@@ -95,12 +107,13 @@ void conf_GPIO(void){
 	GPIO_SetDir(3, (GREENLED_LPC | BLUELED_LPC), 1);
 
 	//Shut down led's
-	LPC_GPIO0->FIOCLR |= REDLED_LPC;
-	LPC_GPIO3->FIOCLR |= (GREENLED_LPC | BLUELED_LPC);
+	LPC_GPIO0->FIOSET |= REDLED_LPC;
+	LPC_GPIO3->FIOSET |= (GREENLED_LPC | BLUELED_LPC);
 }
 
 //External interrupt configuration for general modes changing
 void conf_EXTI0(void){
+	NVIC_DisableIRQ(EINT0_IRQn);
 	//P2.10 as EINT0
 	PINSEL_CFG_Type pinc;
 	pinc.Portnum = PINSEL_PORT_2;
@@ -112,11 +125,12 @@ void conf_EXTI0(void){
 	EXTI_SetMode(EXTI_EINT0,EXTI_MODE_EDGE_SENSITIVE);
 	EXTI_SetPolarity(EXTI_EINT0,EXTI_POLARITY_LOW_ACTIVE_OR_FALLING_EDGE);
 
-	NVIC_EnableIRQ(EINT0_IRQn);
+
 }
 
 //External interrupt configuration for change mode between ADC reading and DAC output in second general mode
 void conf_EXTI1(void){
+	NVIC_DisableIRQ(EINT1_IRQn);
 	//P2.11 as EINT1
 	PINSEL_CFG_Type pinc;
 	pinc.Portnum = PINSEL_PORT_2;
@@ -128,10 +142,11 @@ void conf_EXTI1(void){
 	EXTI_SetMode(EXTI_EINT1,EXTI_MODE_EDGE_SENSITIVE);
 	EXTI_SetPolarity(EXTI_EINT1,EXTI_POLARITY_LOW_ACTIVE_OR_FALLING_EDGE);
 
-	NVIC_EnableIRQ(EINT1_IRQn);
+
 }
 
 void conf_ADC(void){
+	NVIC_DisableIRQ(ADC_IRQn);
 	//P0.23 as AD0.0
 	PINSEL_CFG_Type pinc;
 	pinc.Portnum = PINSEL_PORT_0;
@@ -168,17 +183,17 @@ void conf_DAC(void){
 
 //DMA configuration function. 'P2M' is a flag to know if the transfer is ADC to Mem or Mem to DAC.
 void conf_DMA(uint8_t P2M){
-	GPDMA_LLI_Type list;
+	NVIC_DisableIRQ(DMA_IRQn);
 	if(!P2M){//If transfer type is M2P (DAC to memory), then configure LLI
-		list.SrcAddr = (uint32_t)signal;
-		list.DstAddr = (uint32_t)&(LPC_DAC->DACR);
-		list.NextLLI = (uint32_t)&list;
-		list.Control = (299)	//Transfer size
+		DMA_list.SrcAddr = (uint32_t)signal;
+		DMA_list.DstAddr = (uint32_t)&(LPC_DAC->DACR);
+		DMA_list.NextLLI = (uint32_t)&DMA_list;
+		DMA_list.Control = (299)	//Transfer size
 					  |(2<<18)	//Source width = 32 bits
 					  |(2<<21);	//Destination width = 32 bits
 		//Set SI and clear DI
-		list.Control &= ~(1<<27);
-		list.Control |= (1<<26);
+		DMA_list.Control &= ~(1<<27);
+		DMA_list.Control |= (1<<26);
 	}
 
 	GPDMA_Init();
@@ -192,8 +207,55 @@ void conf_DMA(uint8_t P2M){
 	dmac.TransferType = (P2M) ? GPDMA_TRANSFERTYPE_P2M : GPDMA_TRANSFERTYPE_M2P;
 	dmac.SrcConn = (P2M) ? GPDMA_CONN_ADC : 0;
 	dmac.DstConn = (P2M) ? 0 : GPDMA_CONN_DAC;
-	dmac.DMALLI = (uint32_t)((P2M) ? 0 : &list);
+	dmac.DMALLI = (uint32_t)((P2M) ? 0 : &DMA_list);
 	GPDMA_Setup(&dmac);
+}
+
+void configUART(void) {
+    // Configura pines para UART2
+    PINSEL_CFG_Type PinCfg;
+    PinCfg.Funcnum = 1;
+    PinCfg.Portnum = 0;
+    PinCfg.Pinnum = 10;
+    PINSEL_ConfigPin(&PinCfg);
+    PinCfg.Pinnum = 11;
+    PINSEL_ConfigPin(&PinCfg);
+
+    // Configura el periférico UART
+    UART_CFG_Type UARTConfigStruct;
+    UART_FIFO_CFG_Type FIFOCfg;
+
+    FIFOCfg.FIFO_DMAMode = DISABLE;
+    FIFOCfg.FIFO_Level = UART_FIFO_TRGLEV1;
+    FIFOCfg.FIFO_ResetRxBuf = ENABLE;
+    FIFOCfg.FIFO_ResetTxBuf = ENABLE;
+    UARTConfigStruct.Baud_rate = 460800;
+    UARTConfigStruct.Databits = UART_DATABIT_8;
+    UARTConfigStruct.Parity = UART_PARITY_NONE;
+    UARTConfigStruct.Stopbits = UART_STOPBIT_1;
+    UART_FIFOConfigStructInit(&FIFOCfg);
+    UART_Init(LPC_UART2, &UARTConfigStruct);
+    UART_FIFOConfig(LPC_UART2, &FIFOCfg);
+
+    // Habilita la interrupción de recepción para UART2
+    UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
+
+    // Habilita el buffer de recepción con el tamaño deseado
+    UART_Receive(LPC_UART2, uartRxBuffer, UART_RX_BUFFER_SIZE, BLOCKING);
+}
+
+void UART2_IRQHandler(void) {
+	  // Verifica si la interrupción es por Recepción de Datos (RBR)
+	   if (UART_GetLineStatus(LPC_UART2) & UART_LSR_RDR){
+	       UART_Receive(LPC_UART2, uartRxBuffer, UART_RX_BUFFER_SIZE, BLOCKING);
+	       processReceivedData();
+	   }
+
+	   NVIC_ClearPendingIRQ(UART2_IRQn);
+}
+
+void processReceivedData(void){
+
 }
 
 void EINT0_IRQHandler(){
@@ -217,9 +279,9 @@ void EINT0_IRQHandler(){
 	else{
 		if(adc_converting){
 			//Alert to user and do nothing
-			LPC_GPIO0->FIOSET |= REDLED_LPC;
-			delay(2000);
 			LPC_GPIO0->FIOCLR |= REDLED_LPC;
+			delay(2000);
+			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
 			//Stop DMA transfer and disable its channel cleanly
@@ -242,12 +304,12 @@ void EINT0_IRQHandler(){
 }
 
 void EINT1_IRQHandler(){
-	if(modo==1){
+	if(mode == 1){
 		if(adc_converting){
 			//Alert to user and do nothing
-			LPC_GPIO0->FIOSET |= REDLED_LPC;
-			delay(2000);
 			LPC_GPIO0->FIOCLR |= REDLED_LPC;
+			delay(2000);
+			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
 			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
@@ -262,9 +324,9 @@ void EINT1_IRQHandler(){
 	}
 	else{
 		//Alert to user and do nothing
-		LPC_GPIO3->FIOSET |= BLUELED_LPC;
-		delay(2000);
 		LPC_GPIO3->FIOCLR |= BLUELED_LPC;
+		delay(2000);
+		LPC_GPIO3->FIOSET |= BLUELED_LPC;
 	}
 
 
