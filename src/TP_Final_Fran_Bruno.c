@@ -44,7 +44,7 @@ void delay(uint32_t times);
 uint32_t signal[300]; //300 samples (1,2KB)
 uint8_t adc_converting;
 uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
-uint8_t uartRxBuffer[4];
+uint8_t uartRxBuffer[4] = "";
 
 GPDMA_LLI_Type DMA_list;
 int main(void) {
@@ -55,18 +55,20 @@ int main(void) {
 	conf_EXTI1();
 	conf_ADC();
 	conf_DAC();
+	configUART();
 	//init_PWMs();//implement
 
 
 	//UART_TxCmd(LPC_UART2, ENABLE);
 	//UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
-
+	GPIO_SetValue(3, GREENLED_LPC);
 	NVIC_EnableIRQ(UART2_IRQn);
 
 	NVIC_EnableIRQ(EINT0_IRQn);
 	NVIC_EnableIRQ(EINT1_IRQn);
 
     while(1) {
+
     }
 
     return 0 ;
@@ -219,10 +221,10 @@ void conf_DMA(uint8_t P2M){
 }
 
 void configUART(void) {
-	NVIC_DisableIRQ(DMA_IRQn);
     // Configura pines para UART2
     PINSEL_CFG_Type PinCfg;
     PinCfg.Funcnum = 1;
+    PinCfg.OpenDrain = 0;
     PinCfg.Pinmode = 0;
     PinCfg.Portnum = 0;
     PinCfg.Pinnum = 10;
@@ -234,6 +236,7 @@ void configUART(void) {
     UART_FIFO_CFG_Type UARTFIFOConfigStruct;
     //configuraci�n por defecto:
     UART_ConfigStructInit(&UARTConfigStruct);
+    UARTConfigStruct.Baud_rate = 480600;
     //inicializa perif�rico
     UART_Init(LPC_UART2, &UARTConfigStruct);
     //Inicializa FIFO
@@ -246,7 +249,8 @@ void configUART(void) {
     return;
 }
 
-void UART2_IRQHandler() {
+void UART2_IRQHandler(void) {
+	GPIO_ClearValue(3, GREENLED_LPC);
 	uint32_t intsrc, tmp, tmp1;
 		//Determina la fuente de interrupci�n
 		intsrc = UART_GetIntId(LPC_UART2);
@@ -263,8 +267,9 @@ void UART2_IRQHandler() {
 		}
 		// Receive Data Available or Character time-out
 		if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI)){
-			UART_Receive(LPC_UART2, uartRxBuffer, sizeof(uartRxBuffer), NONE_BLOCKING);
+			UART_Receive(LPC_UART2, uartRxBuffer, sizeof(uartRxBuffer), BLOCKING);
 		}
+		GPIO_SetValue(3, GREENLED_LPC);
 		return;
 }
 
@@ -385,9 +390,9 @@ void turn_off_PWMs(void){
 	NVIC_DisableIRQ(TIMER1_IRQn);
 	NVIC_DisableIRQ(TIMER2_IRQn);
 
-	TIM_Cmd(LPC_TIM0,DISABLE);
-	TIM_Cmd(LPC_TIM1,DISABLE);
-	TIM_Cmd(LPC_TIM2,DISABLE);
+	//TIM_Cmd(LPC_TIM0,DISABLE);
+	//TIM_Cmd(LPC_TIM1,DISABLE);
+	//TIM_Cmd(LPC_TIM2,DISABLE);
 	GPIO_ClearValue(0, 0x7);
 }
 
@@ -397,9 +402,9 @@ void turn_on_PWMs(void){
 	NVIC_EnableIRQ(TIMER1_IRQn);
 	NVIC_EnableIRQ(TIMER2_IRQn);
 
-	TIM_Cmd(LPC_TIM0,ENABLE);
-	TIM_Cmd(LPC_TIM1,ENABLE);
-	TIM_Cmd(LPC_TIM2,ENABLE);
+	//TIM_Cmd(LPC_TIM0,ENABLE);
+	//TIM_Cmd(LPC_TIM1,ENABLE);
+	//TIM_Cmd(LPC_TIM2,ENABLE);
 }
 
 void delay(uint32_t times) {
