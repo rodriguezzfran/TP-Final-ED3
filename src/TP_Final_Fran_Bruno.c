@@ -29,11 +29,11 @@ void delay(uint32_t times);
 
 
 /*
- * ADC_Freq = 100 [Hz] -> T between samples = 10[ms].
- * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 10[ms] = 250000;
+ * ADC_Freq = 120 [Hz] -> T between samples = 8.33[ms].
+ * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 8.33[ms] = 208333,33;
  */
-#define ADC_FREQ 100
-#define DAC_TOUT 250000
+#define ADC_FREQ 120
+#define DAC_TOUT 208333
 
 #define REDLED_LPC		(1<<22)
 #define GREENLED_LPC 	(1<<25)
@@ -41,8 +41,8 @@ void delay(uint32_t times);
 
 #define UART_RX_BUFFER_SIZE 4
 
-uint32_t signal[300]; //300 samples (1,2KB)
-uint8_t adc_converting;
+uint32_t led_signal[360]; //360 samples
+uint8_t adc_converting = 0;
 uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
 uint8_t uartRxBuffer[4] = "";
 
@@ -59,6 +59,7 @@ int main(void) {
 	//init_PWMs();//implement
 
 	//Set P0.3 for adc signal
+	GPIO_SetValue(0, 0x8);
 
 	//UART_TxCmd(LPC_UART2, ENABLE);
 	//UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
@@ -94,8 +95,11 @@ void conf_GPIO(void){
 	pinc.Pinnum = PINSEL_PIN_2;
 	PINSEL_ConfigPin(&pinc);
 
-	//Set P0.0 P0.1 and P0.2 as output
-	GPIO_SetDir(0,0x7,1);
+	pinc.Pinnum = PINSEL_PIN_3;
+	PINSEL_ConfigPin(&pinc);
+
+	//Set P0.0 P0.1 P0.2 and P0.3 as output
+	GPIO_SetDir(0,0x15,1);
 
 
 	//Also we configure the integrated led's for user alerts
@@ -195,10 +199,10 @@ void conf_DAC(void){
 void conf_DMA(uint8_t P2M){
 	NVIC_DisableIRQ(DMA_IRQn);
 	if(!P2M){//If transfer type is M2P (DAC to memory), then configure LLI
-		DMA_list.SrcAddr = (uint32_t)signal;
+		DMA_list.SrcAddr = (uint32_t)led_signal;
 		DMA_list.DstAddr = (uint32_t)&(LPC_DAC->DACR);
 		DMA_list.NextLLI = (uint32_t)&DMA_list;
-		DMA_list.Control = (299)	//Transfer size
+		DMA_list.Control = (sizeof(led_signal) - 1)	//Transfer size
 					  |(2<<18)	//Source width = 32 bits
 					  |(2<<21);	//Destination width = 32 bits
 		//Set SI and clear DI
@@ -210,9 +214,9 @@ void conf_DMA(uint8_t P2M){
 
 	GPDMA_Channel_CFG_Type dmac;
 	dmac.ChannelNum = 0;
-	dmac.SrcMemAddr = (uint32_t)((P2M) ? 0 : signal);
-	dmac.DstMemAddr = (uint32_t)((P2M) ? signal : 0);
-	dmac.TransferSize = 299;
+	dmac.SrcMemAddr = (uint32_t)((P2M) ? 0 : led_signal);
+	dmac.DstMemAddr = (uint32_t)((P2M) ? led_signal : 0);
+	dmac.TransferSize = sizeof(led_signal) - 1;
 	dmac.TransferWidth = 0;
 	dmac.TransferType = (P2M) ? GPDMA_TRANSFERTYPE_P2M : GPDMA_TRANSFERTYPE_M2P;
 	dmac.SrcConn = (P2M) ? GPDMA_CONN_ADC : 0;
@@ -359,7 +363,7 @@ void EINT1_IRQHandler(){
 }
 
 void DMA_IRQHandler(){
-	//if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
+	if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
 		if(adc_converting){
 			while(!ADC_ChannelGetStatus(LPC_ADC, 0, ADC_DATA_DONE));//Wait for ADC to finish
 			ADC_ChannelCmd(LPC_ADC, 0, DISABLE);
@@ -372,8 +376,8 @@ void DMA_IRQHandler(){
 			conf_DMA(0);//Configure DMA for DAC to memory transfer
 			GPDMA_ChannelCmd(0, ENABLE);
 			adc_converting = 0;
-			NVIC_DisableIRQ(DMA_IRQn);//Disable DMA interrupts
-		//}
+			//NVIC_DisableIRQ(DMA_IRQn);//Disable DMA interrupts
+		}
 	}
 
 	GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 0);
@@ -381,8 +385,8 @@ void DMA_IRQHandler(){
 }
 
 void adapt_signal_data_for_dac(void){
-	for(int i =0 ; i<sizeof(signal);i++){
-		signal[i] &= (0x3FF << 6);
+	for(int i =0 ; i<sizeof(led_signal);i++){
+		led_signal[i] &= (0x3FF << 6);
 	}
 }
 
