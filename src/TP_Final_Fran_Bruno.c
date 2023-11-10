@@ -58,6 +58,7 @@ int main(void) {
 	configUART();
 	//init_PWMs();//implement
 
+	//Set P0.3 for adc signal
 
 	//UART_TxCmd(LPC_UART2, ENABLE);
 	//UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
@@ -291,8 +292,8 @@ void EINT0_IRQHandler(){
 
 		//Configure DMA and enable its channel and ADC channel
 		conf_DMA(1);
-		GPDMA_ChannelCmd(0, ENABLE);
 		NVIC_EnableIRQ(DMA_IRQn);
+		GPDMA_ChannelCmd(0, ENABLE);
 		ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
 		adc_converting = 1;
 		mode = 1;
@@ -358,7 +359,7 @@ void EINT1_IRQHandler(){
 }
 
 void DMA_IRQHandler(){
-	if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
+	//if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
 		if(adc_converting){
 			while(!ADC_ChannelGetStatus(LPC_ADC, 0, ADC_DATA_DONE));//Wait for ADC to finish
 			ADC_ChannelCmd(LPC_ADC, 0, DISABLE);
@@ -372,7 +373,7 @@ void DMA_IRQHandler(){
 			GPDMA_ChannelCmd(0, ENABLE);
 			adc_converting = 0;
 			NVIC_DisableIRQ(DMA_IRQn);//Disable DMA interrupts
-		}
+		//}
 	}
 
 	GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 0);
