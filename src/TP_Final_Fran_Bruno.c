@@ -29,11 +29,11 @@ void delay(uint32_t times);
 
 
 /*
- * ADC_Freq = 120 [Hz] -> T between samples = 8.33[ms].
- * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 8.33[ms] = 208333,33;
+ * ADC_Freq = 1502 [Hz] -> T between samples = 666[us].
+ * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 666[us] = 16644.47;
  */
-#define ADC_FREQ 120
-#define DAC_TOUT 208333
+#define ADC_FREQ 1502
+#define DAC_TOUT ((1/ADC_FREQ)*25000000)
 
 #define REDLED_LPC		(1<<22)
 #define GREENLED_LPC 	(1<<25)
@@ -41,7 +41,7 @@ void delay(uint32_t times);
 
 #define UART_RX_BUFFER_SIZE 4
 
-uint32_t led_signal[360]; //360 samples
+uint32_t led_signal[4096]; //In a range of 2.7 seconds, 4096 will be loaded with a rate of 1502[Hz] (1 data in 666[us])
 uint8_t adc_converting = 0;
 uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
 uint8_t uartRxBuffer[4] = "";
@@ -99,7 +99,7 @@ void conf_GPIO(void){
 	PINSEL_ConfigPin(&pinc);
 
 	//Set P0.0 P0.1 P0.2 and P0.3 as output
-	GPIO_SetDir(0,0x15,1);
+	GPIO_SetDir(0,0b1111,1);
 
 
 	//Also we configure the integrated led's for user alerts
@@ -170,7 +170,7 @@ void conf_ADC(void){
 	PINSEL_ConfigPin(&pinc);
 
 	ADC_Init(LPC_ADC,ADC_FREQ);
-	ADC_IntConfig(LPC_ADC,ADC_ADINTEN0,ENABLE);//Enable interrupt for DMA request
+	ADC_IntConfig(LPC_ADC,ADC_ADGINTEN,ENABLE);//Enable interrupt for DMA request
 	//Since this is a previous configuration, the channel will be disabled until we need the ADC (exti0 handler).
 	ADC_BurstCmd(LPC_ADC,1);//Burst mode for DMA
 	ADC_StartCmd(LPC_ADC,ADC_START_CONTINUOUS);
@@ -216,13 +216,14 @@ void conf_DMA(uint8_t P2M){
 	dmac.ChannelNum = 0;
 	dmac.SrcMemAddr = (uint32_t)((P2M) ? 0 : led_signal);
 	dmac.DstMemAddr = (uint32_t)((P2M) ? led_signal : 0);
-	dmac.TransferSize = sizeof(led_signal) - 1;
+	dmac.TransferSize = (sizeof(led_signal) - 1);
 	dmac.TransferWidth = 0;
 	dmac.TransferType = (P2M) ? GPDMA_TRANSFERTYPE_P2M : GPDMA_TRANSFERTYPE_M2P;
 	dmac.SrcConn = (P2M) ? GPDMA_CONN_ADC : 0;
 	dmac.DstConn = (P2M) ? 0 : GPDMA_CONN_DAC;
 	dmac.DMALLI = (uint32_t)((P2M) ? 0 : &DMA_list);
 	GPDMA_Setup(&dmac);
+	LPC_GPDMACH0->DMACCConfig &= ~(1<<18); //Enable requests for channel 0
 }
 
 void configUART(void) {
@@ -282,7 +283,7 @@ void processReceivedData(void){
 
 }
 
-void EINT0_IRQHandler(){
+void EINT0_IRQHandler(void){
 	if(mode == 0){
 		//Disable UART
 		// Deshabilita interrupci�n por el RX del UART
@@ -298,7 +299,7 @@ void EINT0_IRQHandler(){
 		conf_DMA(1);
 		NVIC_EnableIRQ(DMA_IRQn);
 		GPDMA_ChannelCmd(0, ENABLE);
-		ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
+		ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
 		adc_converting = 1;
 		mode = 1;
 	}
@@ -311,8 +312,8 @@ void EINT0_IRQHandler(){
 		}
 		else{
 			//Stop DMA transfer and disable its channel cleanly
-			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
-			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
 			GPDMA_ChannelCmd(0,DISABLE);
 
 			DAC_UpdateValue(LPC_DAC, 0);
@@ -330,6 +331,7 @@ void EINT0_IRQHandler(){
 	}
 
 	EXTI_ClearEXTIFlag(EXTI_EINT0);
+	return;
 }
 
 void EINT1_IRQHandler(){
@@ -341,13 +343,14 @@ void EINT1_IRQHandler(){
 			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
-			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
-			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
 			GPDMA_ChannelCmd(0,DISABLE);
 			conf_DMA(1);
+
 			GPDMA_ChannelCmd(0, ENABLE);
 			NVIC_EnableIRQ(DMA_IRQn);
-			ADC_ChannelCmd(LPC_ADC, 0, ENABLE);
+			ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
 			adc_converting = 1;
 		}
 	}
@@ -365,11 +368,11 @@ void EINT1_IRQHandler(){
 void DMA_IRQHandler(){
 	if(GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)){
 		if(adc_converting){
-			while(!ADC_ChannelGetStatus(LPC_ADC, 0, ADC_DATA_DONE));//Wait for ADC to finish
-			ADC_ChannelCmd(LPC_ADC, 0, DISABLE);
+			while(!ADC_GlobalGetStatus(LPC_ADC,ADC_DATA_DONE));//Wait for ADC to finish
+			ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE);
 
-			LPC_GPDMACH0->DMACCControl &= ~(1<<18); //Disable requests for channel 0
-			while(LPC_GPDMACH0->DMACCControl & (1<<17)); //Wait for possible data in channels FIFO
+			LPC_GPDMACH0->DMACCConfig &= ~(1<<18); //Disable requests for channel 0
+			while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
 			GPDMA_ChannelCmd(0,DISABLE);
 
 			adapt_signal_data_for_dac();
