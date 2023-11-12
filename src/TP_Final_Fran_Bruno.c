@@ -42,23 +42,23 @@ void delay(uint32_t times);
 #define GREENLED_LPC 	(1<<25)
 #define BLUELED_LPC 	(1<<26)
 
-#define UART_RX_BUFFER_SIZE 4
+#define UART_RX_BUFFER_SIZE 3
 
 
-uint32_t led_signal[CANT_SAMPLES]; //In a range of 5 seconds, 2500 data will be loaded with a rate of 1000[Hz] (1 data in 1[ms])
-uint32_t auxiliar[30];
-uint8_t uartRxBuffer[4] = "";
+volatile uint32_t led_signal[CANT_SAMPLES]; //In a range of 5 seconds, 2500 data will be loaded with a rate of 1000[Hz] (1 data in 1[ms])
+volatile uint32_t auxiliar[30];
+volatile uint8_t uartRxBuffer[UART_RX_BUFFER_SIZE] = "";
 
-uint8_t adc_converting = 0;
-uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
-uint16_t data_counter = 0;
-uint16_t one_sec_check = 0;
-uint8_t adc_preparing = 0;
+volatile uint8_t adc_converting = 0;
+volatile uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation
+volatile uint16_t data_counter = 0;
+volatile uint16_t one_sec_check = 0;
+volatile uint8_t adc_preparing = 0;
 
 //Match values for PWMs duty cycles
-uint8_t current_red_pwm_duty = 100 - 1;
-uint8_t current_green_pwm_duty = 50 - 1;
-uint8_t current_blue_pwm_duty = 10 - 1;
+volatile uint8_t current_red_pwm_duty = 100 - 1;
+volatile uint8_t current_green_pwm_duty = 50 - 1;
+volatile uint8_t current_blue_pwm_duty = 10 - 1;
 
 GPDMA_LLI_Type DMA_list;
 
@@ -535,11 +535,11 @@ void DMA_IRQHandler(){
 
 
 void processReceivedData(void){
-	uint8_t info, blueVal, greenVal, redVal;
+	uint8_t blueVal, greenVal, redVal;
 	blueVal = uartRxBuffer[0];
 	greenVal = uartRxBuffer[1];
 	redVal = uartRxBuffer[2];
-	info = uartRxBuffer[3];
+	//info = uartRxBuffer[3];
 
 	conf_PWM_Red(redVal);
 	conf_PWM_Green(greenVal);
