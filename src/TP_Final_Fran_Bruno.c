@@ -7,7 +7,6 @@
 #include "lpc17xx_timer.h"
 #include "lpc17xx_uart.h"
 #include "lpc17xx_pinsel.h"
-#include "lpc17xx_systick.h"
 
 void conf_GPIO(void);
 void conf_EXTI0(void);
@@ -19,7 +18,6 @@ void configUART(void);
 void conf_Timer0(void);
 void conf_Timer1(void);
 void conf_Timer2(void);
-void conf_SysTick(void);
 
 void conf_PWM_Red(uint8_t redVal);
 void conf_PWM_Green(uint8_t greenVal);
@@ -28,7 +26,6 @@ void conf_PWM_Blue(uint8_t blueVal);
 void turn_on_PWMs(void);
 void turn_off_PWMs(void);
 void processReceivedData(void);
-void adapt_signal_data_for_dac(void);
 void delay(uint32_t times);
 
 
@@ -37,7 +34,7 @@ void delay(uint32_t times);
  * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 666[us] = 16644.47;
  */
 #define ADC_FREQ 200000
-#define SAMPLES_FREQ 1000
+#define SAMPLES_FREQ 500
 #define CANT_SAMPLES (5*SAMPLES_FREQ)
 #define DAC_TOUT ((1/SAMPLES_FREQ)*25000000)
 
@@ -47,7 +44,9 @@ void delay(uint32_t times);
 
 #define UART_RX_BUFFER_SIZE 4
 
-uint32_t led_signal[CANT_SAMPLES]; //In a range of 5 seconds, 5000 data will be loaded with a rate of 1000[Hz] (1 data in 1[ms])
+
+uint32_t led_signal[CANT_SAMPLES]; //In a range of 5 seconds, 2500 data will be loaded with a rate of 1000[Hz] (1 data in 1[ms])
+uint32_t auxiliar[30];
 uint8_t uartRxBuffer[4] = "";
 
 uint8_t adc_converting = 0;
@@ -59,14 +58,18 @@ uint8_t adc_preparing = 0;
 //Match values for PWMs duty cycles
 uint8_t current_red_pwm_duty = 100 - 1;
 uint8_t current_green_pwm_duty = 50 - 1;
-uint8_t current_blue_pwm_duty = 50 - 1;
+uint8_t current_blue_pwm_duty = 10 - 1;
 
 GPDMA_LLI_Type DMA_list;
 
 int main(void) {
+	for(int i = 0; i < 30 ; i++){
+		auxiliar[i]=(i*30);
+	}
+
+
 	conf_GPIO();
 
-	conf_SysTick();
 	conf_EXTI0();
 	conf_EXTI1();
 	conf_ADC();
@@ -194,12 +197,6 @@ void conf_Timer2(void){
 	TIM_ConfigMatch(LPC_TIM2, &matc);
 }
 
-void conf_SysTick(void){
-	SysTick->CTRL |= (1<<2);
-	SysTick->LOAD = ((1/SAMPLES_FREQ)*SystemCoreClock) - 1;
-	SysTick->VAL = 0;
-}
-
 //External interrupt configuration for general modes changing
 void conf_EXTI0(void){
 	NVIC_DisableIRQ(EINT0_IRQn);
@@ -213,8 +210,6 @@ void conf_EXTI0(void){
 
 	EXTI_SetMode(EXTI_EINT0,EXTI_MODE_EDGE_SENSITIVE);
 	EXTI_SetPolarity(EXTI_EINT0,EXTI_POLARITY_LOW_ACTIVE_OR_FALLING_EDGE);
-
-
 }
 
 //External interrupt configuration for change mode between ADC reading and DAC output in second general mode
@@ -230,8 +225,6 @@ void conf_EXTI1(void){
 
 	EXTI_SetMode(EXTI_EINT1,EXTI_MODE_EDGE_SENSITIVE);
 	EXTI_SetPolarity(EXTI_EINT1,EXTI_POLARITY_LOW_ACTIVE_OR_FALLING_EDGE);
-
-
 }
 
 void conf_ADC(void){
@@ -259,40 +252,44 @@ void conf_DAC(void){
 	PINSEL_ConfigPin(&pinc);
 
 	DAC_CONVERTER_CFG_Type dacc;
-	dacc.CNT_ENA = 1;
-	dacc.DMA_ENA = 1;
+	dacc.CNT_ENA = SET;
+	dacc.DMA_ENA = SET;
 
 	DAC_Init(LPC_DAC);
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacc);
-	DAC_SetDMATimeOut(LPC_DAC, DAC_TOUT);
+	DAC_SetDMATimeOut(LPC_DAC, 12500000);
 	DAC_UpdateValue(LPC_DAC, 0);
 }
 
 void conf_DMA(void){
 	NVIC_DisableIRQ(DMA_IRQn);
+	//GPDMA_ClearIntPending(GPDMA_STAT_INTTC, 0);
+	//GPDMA_ClearIntPending(GPDMA_STAT_INTERR, 0);
 
-	DMA_list.SrcAddr = (uint32_t)led_signal;
-	DMA_list.DstAddr = (uint32_t)&(LPC_DAC->DACR);
-	DMA_list.NextLLI = (uint32_t)&DMA_list;
-	DMA_list.Control = (sizeof(led_signal) - 1)	//Transfer size
+	DMA_list.SrcAddr = (uint32_t)auxiliar;
+	DMA_list.DstAddr = (uint32_t)(&LPC_DAC->DACR);
+	DMA_list.NextLLI = (uint32_t)(&DMA_list);
+	DMA_list.Control = (30)	//Transfer size
 				  |(2<<18)	//Source width = 32 bits
 				  |(2<<21)	//Destination width = 32 bits
 				  |(1<<26);	//Set SI
+	DMA_list.Control &= ~(1<<27); //Clear DI
 
 	GPDMA_Init();
 
 	GPDMA_Channel_CFG_Type dmac;
 	dmac.ChannelNum = 0;
-	dmac.SrcMemAddr = (uint32_t)(led_signal);
+	dmac.SrcMemAddr = (uint32_t)auxiliar;
 	dmac.DstMemAddr = 0;
-	dmac.TransferSize = (sizeof(led_signal) - 1);
+	dmac.TransferSize = (30);
 	dmac.TransferWidth = 0;
 	dmac.TransferType = GPDMA_TRANSFERTYPE_M2P;
 	dmac.SrcConn = 0;
 	dmac.DstConn = GPDMA_CONN_DAC;
-	dmac.DMALLI = (uint32_t)&(DMA_list);
+	dmac.DMALLI = (uint32_t)(&DMA_list);
 	GPDMA_Setup(&dmac);
-	LPC_GPDMACH0->DMACCConfig &= ~(1<<18); //Enable requests for channel 0
+	//LPC_GPDMACH0->DMACCControl |= (2<<18) | (2<<21);
+
 }
 
 void configUART(void) {
@@ -360,7 +357,9 @@ void EINT0_IRQHandler(void){
 
 		//Enable SysTick
 		//GPIO_SetValue(3, GREENLED_LPC);
-		SysTick->CTRL |= (0x3);
+		if (SysTick_Config(SystemCoreClock/SAMPLES_FREQ)){	// Systick 1ms
+			while (1); // En caso de error
+		}
 
 		adc_preparing = 1;
 		mode = 1;
@@ -374,9 +373,10 @@ void EINT0_IRQHandler(void){
 		}
 		else{
 			//Stop DMA transfer and disable its channel cleanly
-			LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
-			while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			GPDMA_ChannelCmd(0,DISABLE);
+			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
+			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
+			//GPDMA_ChannelCmd(0,DISABLE);
+			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
 
 			DAC_UpdateValue(LPC_DAC, 0);
 
@@ -405,12 +405,13 @@ void EINT1_IRQHandler(void){
 			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
-			LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
-			while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			GPDMA_ChannelCmd(0,DISABLE);
+			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
+			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
+			//GPDMA_ChannelCmd(0,DISABLE);
+			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
+			DAC_UpdateValue(LPC_DAC, 0);
 
-			SysTick->CTRL |= (0x3);
-
+			//GPIO_ClearValue(3,	GREENLED_LPC);
 			adc_preparing = 1;
 		}
 	}
@@ -426,20 +427,20 @@ void EINT1_IRQHandler(void){
 }
 
 void ADC_IRQHandler(void){
-	ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE);
+	//ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE);
 	if(data_counter < CANT_SAMPLES){
-		led_signal[data_counter] = LPC_ADC->ADDR0;
+		//led_signal[data_counter] = LPC_ADC->ADDR0;
+		led_signal[data_counter] = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
 		data_counter++;
 	}
 	else{
 		data_counter = 0;
 		NVIC_DisableIRQ(ADC_IRQn);
-		adapt_signal_data_for_dac();
-		adc_converting = 0;
 		GPIO_SetValue(3, GREENLED_LPC);
-		SysTick->CTRL &= ~(0x3); //Disable SysTick
+		adc_converting = 0;
 
-		GPDMA_ChannelCmd(0, ENABLE);
+		//GPDMA_ChannelCmd(0, ENABLE);
+		LPC_GPDMACH0->DMACCConfig |= (0x1);
 	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
@@ -447,23 +448,25 @@ void ADC_IRQHandler(void){
 }
 
 void SysTick_Handler(void){
-	if(adc_preparing){
-		if(one_sec_check<1000){
-			one_sec_check++;
+	if(adc_preparing || adc_converting){
+		if(adc_preparing){
+			if(one_sec_check<(SAMPLES_FREQ*2)){//Count 2 seconds
+				one_sec_check++;
+			}
+			else{
+				adc_preparing = 0;
+				one_sec_check = 0;
+				adc_converting = 1;
+				NVIC_EnableIRQ(ADC_IRQn);
+				ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+				ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+				GPIO_ClearValue(3, GREENLED_LPC);
+			}
 		}
 		else{
-			adc_preparing = 0;
-			one_sec_check = 0;
-			adc_converting = 1;
-			NVIC_EnableIRQ(ADC_IRQn);
-			ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+			//ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
 			ADC_StartCmd(LPC_ADC, ADC_START_NOW);
-			GPIO_ClearValue(3, GREENLED_LPC);
 		}
-	}
-	else{
-		ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-		ADC_StartCmd(LPC_ADC, ADC_START_NOW);
 	}
 
 	SysTick->CTRL &= SysTick->CTRL;//Clear flag
@@ -526,11 +529,10 @@ void TIMER2_IRQHandler(void){
 	TIM_ClearIntPending(LPC_TIM2,TIM_MR0_INT);
 }
 
-void adapt_signal_data_for_dac(void){
-	for(int i =0 ; i<sizeof(led_signal);i++){
-		led_signal[i] &= (0xFF << 8);
-	}
+void DMA_IRQHandler(){
+
 }
+
 
 void processReceivedData(void){
 	uint8_t info, blueVal, greenVal, redVal;
