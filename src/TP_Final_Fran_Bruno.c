@@ -136,8 +136,8 @@ int main(void) {
 	GPIO_SetValue(3, GREENLED_LPC);
 
 	NVIC_EnableIRQ(UART2_IRQn);
-	//NVIC_EnableIRQ(EINT0_IRQn);
-	//NVIC_EnableIRQ(EINT1_IRQn);
+	NVIC_EnableIRQ(EINT0_IRQn);
+	NVIC_EnableIRQ(EINT1_IRQn);
 	turn_on_PWMs();
 
     while(1) {
