@@ -50,6 +50,10 @@ void delay(uint32_t times);
 #define GREENLED_LPC 	(1<<25)
 #define BLUELED_LPC 	(1<<26)
 
+#define REDLED_STRIP 	(1<<0)
+#define GREENLED_STRIP 	(1<<1)
+#define BLUELED_STRIP 	(1<<2)
+
 #define UART_RX_BUFFER_SIZE 4
 
 #define LED_MODE_NORMAL 0
@@ -564,15 +568,15 @@ void SysTick_Handler(void){
 void TIMER0_IRQHandler(void){
 	//TIM_Cmd(LPC_TIM0,DISABLE);
 	LPC_TIM0->TCR |= 2;
-	if(!(LPC_GPIO0->FIOPIN & (REDLED_LPC))){
+	if(LPC_GPIO0->FIOPIN & (REDLED_STRIP)){
 		if(current_red_pwm_duty < 99){
-			LPC_GPIO0->FIOSET |= REDLED_LPC;
+			LPC_GPIO0->FIOCLR |= REDLED_STRIP;
 			LPC_TIM0->MR0 = 99 - current_red_pwm_duty - 1;
 		}
 	}
 	else{
 		if(current_red_pwm_duty > 0){
-			LPC_GPIO0->FIOCLR |= REDLED_LPC;
+			LPC_GPIO0->FIOSET |= REDLED_STRIP;
 			LPC_TIM0->MR0 = (uint32_t)(current_red_pwm_duty);
 		}
 	}
@@ -585,15 +589,15 @@ void TIMER0_IRQHandler(void){
 void TIMER1_IRQHandler(void){
 	//TIM_Cmd(LPC_TIM0,DISABLE);
 	 LPC_TIM1->TCR |= 2;
-	if(!(LPC_GPIO3->FIOPIN & GREENLED_LPC)){
+	if(LPC_GPIO0->FIOPIN & GREENLED_STRIP){
 		if(current_green_pwm_duty < 99){
-			LPC_GPIO3->FIOSET |= GREENLED_LPC;
+			LPC_GPIO0->FIOCLR |= GREENLED_STRIP;
 			LPC_TIM1->MR0 = 99 - current_green_pwm_duty - 1;
 		}
 	}
 	else{
 		if(current_green_pwm_duty > 0){
-			LPC_GPIO3->FIOCLR |= GREENLED_LPC;
+			LPC_GPIO0->FIOSET |= GREENLED_STRIP;
 			LPC_TIM1->MR0 = (uint32_t)(current_green_pwm_duty);
 		}
 	}
@@ -606,15 +610,15 @@ void TIMER1_IRQHandler(void){
 void TIMER2_IRQHandler(void){
 	//TIM_Cmd(LPC_TIM0,DISABLE);
 	 LPC_TIM2->TCR |= 2;
-	if(!(LPC_GPIO3->FIOPIN & (BLUELED_LPC))){
+	if(LPC_GPIO0->FIOPIN & (BLUELED_STRIP)){
 		if(current_blue_pwm_duty < 99){
-			LPC_GPIO3->FIOSET |= BLUELED_LPC;
+			LPC_GPIO0->FIOCLR |= BLUELED_STRIP;
 			LPC_TIM2->MR0 = 99 - current_blue_pwm_duty - 1;
 		}
 	}
 	else{
 		if(current_blue_pwm_duty > 0){
-			LPC_GPIO3->FIOCLR |= BLUELED_LPC;
+			LPC_GPIO0->FIOSET |= BLUELED_STRIP;
 			LPC_TIM2->MR0 = (uint32_t)(current_blue_pwm_duty);
 		}
 	}
@@ -628,17 +632,17 @@ void TIMER3_IRQHandler(void){
 	LPC_TIM3->TCR |= 2;
 	switch(led_mode){
 		case LED_MODE_FLASH:
-			if(!(LPC_GPIO0->FIOPIN & REDLED_LPC)){
-				LPC_GPIO0->FIOSET |= REDLED_LPC;
-				LPC_GPIO3->FIOCLR |= GREENLED_LPC;
+			if(LPC_GPIO0->FIOPIN & REDLED_STRIP){
+				LPC_GPIO0->FIOCLR |= REDLED_STRIP;
+				LPC_GPIO0->FIOSET |= GREENLED_STRIP;
 			}
-			else if(!(LPC_GPIO3->FIOPIN & GREENLED_LPC)){
-				LPC_GPIO3->FIOSET |= GREENLED_LPC;
-				LPC_GPIO3->FIOCLR |= BLUELED_LPC;
+			else if(LPC_GPIO0->FIOPIN & GREENLED_STRIP){
+				LPC_GPIO0->FIOCLR |= GREENLED_STRIP;
+				LPC_GPIO0->FIOSET |= BLUELED_STRIP;
 			}
-			else if(!(LPC_GPIO3->FIOPIN & BLUELED_LPC)){
-				LPC_GPIO3->FIOSET |= BLUELED_LPC;
-				LPC_GPIO0->FIOCLR |= REDLED_LPC;
+			else if(LPC_GPIO0->FIOPIN & BLUELED_STRIP){
+				LPC_GPIO0->FIOCLR |= BLUELED_STRIP;
+				LPC_GPIO0->FIOSET |= REDLED_STRIP;
 			}
 			break;
 		case LED_MODE_STROBE:
@@ -743,8 +747,8 @@ void set_mode_flash(void){
 
 	LPC_TIM3->MR0 = (((10 - led_speed)*1000) - 1);
 
-	GPIO_ClearValue(0, REDLED_LPC);
-	GPIO_SetValue(3,(GREENLED_LPC | BLUELED_LPC));
+	GPIO_SetValue(0, REDLED_STRIP);
+	GPIO_ClearValue(0,(GREENLED_STRIP | BLUELED_STRIP));
 
 	NVIC_EnableIRQ(TIMER3_IRQn);
 	TIM_Cmd(LPC_TIM3,ENABLE);
@@ -822,8 +826,7 @@ void turn_off_PWMs(void){
 	TIM_Cmd(LPC_TIM1,DISABLE);
 	TIM_Cmd(LPC_TIM2,DISABLE);
 
-	GPIO_SetValue(0, REDLED_LPC);
-	GPIO_SetValue(3, (GREENLED_LPC | BLUELED_LPC));
+	GPIO_ClearValue(0, (GREENLED_STRIP | BLUELED_STRIP | REDLED_STRIP));
 }
 
 void delay(uint32_t times) {
