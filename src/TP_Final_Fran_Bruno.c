@@ -58,9 +58,13 @@ void delay(uint32_t times);
 #define LED_MODE_FADE 3
 
 #define LED_SPEED_10 1
+#define LED_SPEED_20 2
 #define LED_SPEED_30 3
+#define LED_SPEED_40 4
 #define LED_SPEED_50 5
+#define LED_SPEED_60 6
 #define LED_SPEED_70 7
+#define LED_SPEED_80 8
 #define LED_SPEED_90 9
 
 const uint8_t LED_Mode[] = {
@@ -71,9 +75,13 @@ const uint8_t LED_Mode[] = {
 };
 const uint8_t LED_Speed[] = {
 	LED_SPEED_10,
+	LED_SPEED_20,
 	LED_SPEED_30,
+	LED_SPEED_40,
 	LED_SPEED_50,
+	LED_SPEED_60,
 	LED_SPEED_70,
+	LED_SPEED_80,
 	LED_SPEED_90
 };
 
@@ -744,7 +752,8 @@ void set_mode_flash(void){
 
 void set_mode_strobe(void){
 
-	LPC_TIM3->MR0 = 800 - 1;//Increment duty cycles every 80[ms]
+	//LPC_TIM3->MR0 = 800 - 1;//Increment duty cycles every 80[ms]
+	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1);
 
 	conf_PWM_Red(255);
 	conf_PWM_Green(255);
@@ -759,7 +768,8 @@ void set_mode_strobe(void){
 
 void set_mode_fade(void){
 
-	LPC_TIM3->MR0 = 1200 - 1;//Increment duty cycles every 120[ms]
+	//LPC_TIM3->MR0 = 1200 - 1;//Increment duty cycles every 120[ms]
+	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1);
 
 	conf_PWM_Red(255);
 	conf_PWM_Green(0);
