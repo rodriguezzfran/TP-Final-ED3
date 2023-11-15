@@ -526,7 +526,7 @@ void EINT1_IRQHandler(void){
 void ADC_IRQHandler(void){
 	if(data_counter < CANT_SAMPLES){
 		//Since the DAC cannot deliver less than 0.7 V, we adapt the signal scaling it's values like this.
-		led_signal[data_counter] = ((((uint32_t)((((LPC_ADC->ADDR0) & (0x3FF<<6)) * 100)/122))+(185<<6)) & (0x3FF<<6));
+		led_signal[data_counter] = ((((uint32_t)((((LPC_ADC->ADDR0) & (0x3FF<<6)) * 1000)/1185))+(160<<6)) & (0x3FF<<6));
 		data_counter++;
 	}
 	else{
