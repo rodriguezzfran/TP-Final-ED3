@@ -37,14 +37,13 @@ void delay(uint32_t times);
 
 
 /*
- * ADC_Freq = 1502 [Hz] -> T between samples = 666[us].
- * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 666[us] = 16644.47;
+ * SAMPLES_FREQ =  500[Hz] -> T between samples = 2[ms].
+ * Then that must be the DAC timeout -> T_ticks = PCLK * T_out -> T_ticks = 25[MHz] * 2[ms] = 50000.
  */
 #define ADC_FREQ 200000
 #define SAMPLES_FREQ 500
-#define CANT_SAMPLES (5*SAMPLES_FREQ)
-//#define CANT_SAMPLES (30)
-#define DAC_TOUT ((1/SAMPLES_FREQ)*25000000)
+#define CANT_SAMPLES (uint32_t)(5*SAMPLES_FREQ)//In a range of 5 seconds, 2500 data will be loaded with a rate of 500[Hz] (1 data in 2[ms]).
+#define DAC_TOUT (uint32_t)(25000000/SAMPLES_FREQ)
 
 #define REDLED_LPC		(1<<22)
 #define GREENLED_LPC 	(1<<25)
@@ -89,8 +88,7 @@ const uint8_t LED_Speed[] = {
 	LED_SPEED_90
 };
 
-__IO uint32_t led_signal[CANT_SAMPLES] = {0}; //In a range of 5 seconds, 2500 data will be loaded with a rate of 1000[Hz] (1 data in 1[ms])
-//uint32_t auxiliar[CANT_SAMPLES];
+__IO uint32_t led_signal[CANT_SAMPLES] = {0};
 uint8_t uartRxBuffer[UART_RX_BUFFER_SIZE] = "";
 
 uint8_t uartflag = 0;
@@ -113,10 +111,6 @@ uint8_t led_speed = 0;
 GPDMA_LLI_Type DMA_list;
 
 int main(void) {
-	//for(int i = 0; i < CANT_SAMPLES ; i++){
-		//auxiliar[i]=(i*30);
-	//}
-	//DAC_UpdateValue(LPC_DAC, 0);
 	//Clear Timers, EINT0/1, UART2, ADC and DMA pending interrupts
 	NVIC->ICPR[0] |= 0b011110010000000001100100010000;
 
@@ -152,6 +146,12 @@ int main(void) {
 }
 
 
+/*-----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* ---------------------------------------------Configuration-------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+*/
 void conf_GPIO(void){
 	PINSEL_CFG_Type pinc;
 
@@ -338,7 +338,7 @@ void conf_DAC(void){
 
 
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacc);
-	DAC_SetDMATimeOut(LPC_DAC, 50000);
+	DAC_SetDMATimeOut(LPC_DAC, DAC_TOUT);
 	DAC_Init(LPC_DAC);
 	DAC_UpdateValue(LPC_DAC, 0);
 }
@@ -407,6 +407,16 @@ void configUART(void) {
     return;
 }
 
+
+
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* ---------------------------------------------Handlers------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+*/
 void UART2_IRQHandler(void) {
 	uartflag++;
 	if(uartflag>1){
@@ -442,16 +452,15 @@ void UART2_IRQHandler(void) {
 void EINT0_IRQHandler(void){
 	if(mode == 0){
 		//Disable UART
-		// Deshabilita interrupci�n por el RX del UART
 		UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, DISABLE);
-		// Deshabilita interrupci�n por el estado de la linea UART
 		UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, DISABLE);
 
 		//Shutdown PWM signals on GPIO pins
 		turn_off_PWMs();
+		NVIC_DisableIRQ(TIMER3_IRQn);
+		TIM_Cmd(LPC_TIM3, DISABLE);
 
 		//Enable SysTick
-		//GPIO_SetValue(3, GREENLED_LPC);
 		if (SysTick_Config(SystemCoreClock/SAMPLES_FREQ)){	// Systick 1ms
 			while (1); // En caso de error
 		}
@@ -468,20 +477,17 @@ void EINT0_IRQHandler(void){
 			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
-			//Stop DMA transfer and disable its channel cleanly
-			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
-			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			//GPDMA_ChannelCmd(0,DISABLE);
+			//Stop DMA transfer
 			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
 
 			DAC_UpdateValue(LPC_DAC, 0);
 
 			//Enable UART and PWM signals again
-			// Habilita interrupci�n por el RX del UART
 			UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
-			// Habilita interrupci�n por el estado de la linea UART
 			UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
 
+			NVIC_EnableIRQ(TIMER3_IRQn);
+			TIM_Cmd(LPC_TIM3, ENABLE);
 			turn_on_PWMs();
 
 			mode=0;
@@ -501,17 +507,9 @@ void EINT1_IRQHandler(void){
 			LPC_GPIO0->FIOSET |= REDLED_LPC;
 		}
 		else{
-			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
-			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			//GPDMA_ChannelCmd(0,DISABLE);
 			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
 			DAC_UpdateValue(LPC_DAC, 0);
-
-			//GPIO_ClearValue(3,	GREENLED_LPC);
 			adc_preparing = 1;
-//			if (SysTick_Config(SystemCoreClock/SAMPLES_FREQ)){	// Systick 1ms
-//				while (1); // En caso de error
-//			}
 		}
 	}
 	else{
@@ -526,10 +524,9 @@ void EINT1_IRQHandler(void){
 }
 
 void ADC_IRQHandler(void){
-	//ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE);
 	if(data_counter < CANT_SAMPLES){
-		led_signal[data_counter] = ((LPC_ADC->ADDR0) & (0x3FF<<6));
-		//led_signal[data_counter] = ADC_ChannelGetData(LPC_ADC, ADC_CHANNEL_0);
+		//Since the DAC cannot deliver less than 0.7 V, we adapt the signal scaling it's values like this.
+		led_signal[data_counter] = ((((uint32_t)((((LPC_ADC->ADDR0) & (0x3FF<<6)) * 100)/122))+(185<<6)) & (0x3FF<<6));
 		data_counter++;
 	}
 	else{
@@ -538,11 +535,7 @@ void ADC_IRQHandler(void){
 		GPIO_SetValue(3, GREENLED_LPC);
 		adc_converting = 0;
 
-		//SysTick->CTRL &= ~(3);
-		//conf_DMA();
-		//GPDMA_ChannelCmd(0, ENABLE);
 		LPC_GPDMACH0->DMACCConfig |= (0x1);
-		delay(1000);
 	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
@@ -566,7 +559,6 @@ void SysTick_Handler(void){
 			}
 		}
 		else{
-			//ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
 			ADC_StartCmd(LPC_ADC, ADC_START_NOW);
 		}
 	}
@@ -575,7 +567,6 @@ void SysTick_Handler(void){
 }
 
 void TIMER0_IRQHandler(void){
-	//TIM_Cmd(LPC_TIM0,DISABLE);
 	LPC_TIM0->TCR |= 2;
 	if(LPC_GPIO0->FIOPIN & (REDLED_STRIP)){
 		if(current_red_pwm_duty < 99){
@@ -589,14 +580,12 @@ void TIMER0_IRQHandler(void){
 			LPC_TIM0->MR0 = (uint32_t)(current_red_pwm_duty);
 		}
 	}
-	//TIM_Cmd(LPC_TIM0,ENABLE);
     LPC_TIM0->TCR &= ~(2);
 
 	TIM_ClearIntPending(LPC_TIM0,TIM_MR0_INT);
 }
 
 void TIMER1_IRQHandler(void){
-	//TIM_Cmd(LPC_TIM0,DISABLE);
 	 LPC_TIM1->TCR |= 2;
 	if(LPC_GPIO0->FIOPIN & GREENLED_STRIP){
 		if(current_green_pwm_duty < 99){
@@ -610,14 +599,12 @@ void TIMER1_IRQHandler(void){
 			LPC_TIM1->MR0 = (uint32_t)(current_green_pwm_duty);
 		}
 	}
-	//TIM_Cmd(LPC_TIM0,ENABLE);
     LPC_TIM1->TCR &= ~(2);
 
 	TIM_ClearIntPending(LPC_TIM1,TIM_MR0_INT);
 }
 
 void TIMER2_IRQHandler(void){
-	//TIM_Cmd(LPC_TIM0,DISABLE);
 	 LPC_TIM2->TCR |= 2;
 	if(LPC_GPIO0->FIOPIN & (BLUELED_STRIP)){
 		if(current_blue_pwm_duty < 99){
@@ -631,7 +618,6 @@ void TIMER2_IRQHandler(void){
 			LPC_TIM2->MR0 = (uint32_t)(current_blue_pwm_duty);
 		}
 	}
-	//TIM_Cmd(LPC_TIM0,ENABLE);
     LPC_TIM2->TCR &= ~(2);
 
 	TIM_ClearIntPending(LPC_TIM2,TIM_MR0_INT);
@@ -714,6 +700,15 @@ void TIMER3_IRQHandler(void){
 	return;
 }
 
+
+
+
+/*-----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* ---------------------------------------------Functions-----------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+* -----------------------------------------------------------------------------------------------------------------------------
+*/
 void processReceivedData(void){
 	LPC_TIM3->TCR |= (2);
 	uint8_t info, blueVal, greenVal, redVal;
@@ -754,7 +749,7 @@ void set_mode_normal(uint8_t redVal, uint8_t greenVal, uint8_t blueVal){
 
 void set_mode_flash(void){
 
-	LPC_TIM3->MR0 = (((10 - led_speed)*1000) - 1);
+	LPC_TIM3->MR0 = (((10 - led_speed)*1000) - 1); //Increment duty cycles depending on led speed
 
 	GPIO_SetValue(0, REDLED_STRIP);
 	GPIO_ClearValue(0,(GREENLED_STRIP | BLUELED_STRIP));
@@ -764,9 +759,7 @@ void set_mode_flash(void){
 }
 
 void set_mode_strobe(void){
-
-	//LPC_TIM3->MR0 = 800 - 1;//Increment duty cycles every 80[ms]
-	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1);
+	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1); //Increment duty cycles depending on led speed
 
 	conf_PWM_Red(255);
 	conf_PWM_Green(255);
@@ -780,9 +773,7 @@ void set_mode_strobe(void){
 }
 
 void set_mode_fade(void){
-
-	//LPC_TIM3->MR0 = 1200 - 1;//Increment duty cycles every 120[ms]
-	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1);
+	LPC_TIM3->MR0 = (((10 - led_speed)*100) - 1); //Increment duty cycles depending on led speed
 
 	conf_PWM_Red(255);
 	conf_PWM_Green(0);
