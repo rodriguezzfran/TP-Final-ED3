@@ -94,9 +94,9 @@ __IO uint32_t led_signal[CANT_SAMPLES] = {0}; //In a range of 5 seconds, 2500 da
 uint8_t uartRxBuffer[UART_RX_BUFFER_SIZE] = "";
 
 uint8_t uartflag = 0;
-uint8_t adc_converting = 0;
+__IO uint8_t adc_converting = 0;
 uint8_t mode = 0; //0: RGB lights controlled by UART from PC. 1: ADC signal recreation.
-uint16_t data_counter = 0;
+__IO uint16_t data_counter = 0;
 uint16_t one_sec_check = 0;
 uint8_t adc_preparing = 0;
 uint8_t strobe_mode_slope = 1; //0: strobe mode getting brighter. 1: strobe mode becoming less bright.
@@ -336,10 +336,11 @@ void conf_DAC(void){
 	dacc.CNT_ENA = SET;
 	dacc.DMA_ENA = SET;
 
-	DAC_SetDMATimeOut(LPC_DAC, DAC_TOUT);
+
 	DAC_ConfigDAConverterControl(LPC_DAC, &dacc);
-	DAC_UpdateValue(LPC_DAC, 0);
+	DAC_SetDMATimeOut(LPC_DAC, 50000);
 	DAC_Init(LPC_DAC);
+	DAC_UpdateValue(LPC_DAC, 0);
 }
 
 void conf_DMA(void){
@@ -470,8 +471,8 @@ void EINT0_IRQHandler(void){
 			//Stop DMA transfer and disable its channel cleanly
 			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
 			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			GPDMA_ChannelCmd(0,DISABLE);
-			//LPC_GPDMACH0->DMACCConfig &= ~(0x1);
+			//GPDMA_ChannelCmd(0,DISABLE);
+			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
 
 			DAC_UpdateValue(LPC_DAC, 0);
 
@@ -502,15 +503,15 @@ void EINT1_IRQHandler(void){
 		else{
 			//LPC_GPDMACH0->DMACCConfig |= (1<<18); //Disable requests for channel 0
 			//while(LPC_GPDMACH0->DMACCConfig & (1<<17)); //Wait for possible data in channels FIFO
-			GPDMA_ChannelCmd(0,DISABLE);
-			//LPC_GPDMACH0->DMACCConfig &= ~(0x1);
+			//GPDMA_ChannelCmd(0,DISABLE);
+			LPC_GPDMACH0->DMACCConfig &= ~(0x1);
 			DAC_UpdateValue(LPC_DAC, 0);
 
 			//GPIO_ClearValue(3,	GREENLED_LPC);
 			adc_preparing = 1;
-			if (SysTick_Config(SystemCoreClock/SAMPLES_FREQ)){	// Systick 1ms
-				while (1); // En caso de error
-			}
+//			if (SysTick_Config(SystemCoreClock/SAMPLES_FREQ)){	// Systick 1ms
+//				while (1); // En caso de error
+//			}
 		}
 	}
 	else{
@@ -537,10 +538,11 @@ void ADC_IRQHandler(void){
 		GPIO_SetValue(3, GREENLED_LPC);
 		adc_converting = 0;
 
-		SysTick->CTRL &= ~(3);
+		//SysTick->CTRL &= ~(3);
 		//conf_DMA();
-		GPDMA_ChannelCmd(0, ENABLE);
-		//LPC_GPDMACH0->DMACCConfig |= (0x1);
+		//GPDMA_ChannelCmd(0, ENABLE);
+		LPC_GPDMACH0->DMACCConfig |= (0x1);
+		delay(1000);
 	}
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
