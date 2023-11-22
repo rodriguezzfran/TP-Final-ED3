@@ -113,8 +113,8 @@ uint8_t current_green_pwm_duty = 50 - 1;
 uint8_t current_blue_pwm_duty = 50 - 1;
 
 //Led mode and led speed initialized as normal mode and speed of 10%
-uint8_t led_mode = 0;
-uint8_t led_speed = 0;
+uint8_t led_mode = LED_MODE_NORMAL;
+uint8_t led_speed = LED_SPEED_10;
 
 GPDMA_LLI_Type DMA_list;
 
